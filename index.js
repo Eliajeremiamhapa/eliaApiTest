@@ -7,25 +7,34 @@ app.use(cors());
 app.use(express.json());
 
 const url = process.env.MONGO_URL; 
+// We create the client but don't connect globally to avoid stale connections
 const client = new MongoClient(url);
 const dbName = "mydatabase";
 
-// Connect once and log success/failure
-async function connectDB() {
-    try { 
-        await client.connect(); 
-        console.log("✅ SUCCESS: Connected to MongoDB Atlas"); 
-    } catch (e) { 
-        console.error("❌ CONNECTION ERROR:", e.message); 
+/**
+ * Helper function to ensure we have an active connection
+ * This prevents the "Topology is closed" error.
+ */
+async function getDB() {
+    try {
+        // If the client isn't connected, connect it
+        await client.connect();
+        return client.db(dbName);
+    } catch (e) {
+        console.error("❌ DATABASE ACCESS ERROR:", e.message);
+        throw e;
     }
 }
-connectDB();
+
+// Health check route (to test if the server is awake)
+app.get('/', (req, res) => res.send("API is awake and running! 🚀"));
 
 // CREATE: Add a student
 app.post('/students', async (req, res) => {
     try {
+        const db = await getDB();
         console.log("Incoming POST data:", req.body);
-        const result = await client.db(dbName).collection("students").insertOne(req.body);
+        const result = await db.collection("students").insertOne(req.body);
         res.status(201).json(result);
     } catch (error) {
         console.error("❌ CREATE ERROR:", error.message);
@@ -36,7 +45,8 @@ app.post('/students', async (req, res) => {
 // READ: Get all students
 app.get('/students', async (req, res) => {
     try {
-        const data = await client.db(dbName).collection("students").find().toArray();
+        const db = await getDB();
+        const data = await db.collection("students").find().toArray();
         console.log(`✅ READ: Found ${data.length} students`);
         res.json(data);
     } catch (error) {
@@ -48,7 +58,8 @@ app.get('/students', async (req, res) => {
 // UPDATE: Edit a student
 app.put('/students/:id', async (req, res) => {
     try {
-        const result = await client.db(dbName).collection("students").updateOne(
+        const db = await getDB();
+        const result = await db.collection("students").updateOne(
             { _id: new ObjectId(req.params.id) },
             { $set: req.body }
         );
@@ -62,7 +73,8 @@ app.put('/students/:id', async (req, res) => {
 // DELETE: Remove a student
 app.delete('/students/:id', async (req, res) => {
     try {
-        const result = await client.db(dbName).collection("students").deleteOne({ 
+        const db = await getDB();
+        const result = await db.collection("students").deleteOne({ 
             _id: new ObjectId(req.params.id) 
         });
         res.json(result);
@@ -72,8 +84,9 @@ app.delete('/students/:id', async (req, res) => {
     }
 });
 
-// Health check route (to test if the server is awake)
-app.get('/', (req, res) => res.send("API is awake and running! 🚀"));
-
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => console.log(`🚀 API Mission Control active on port ${PORT}`));
+app.listen(PORT, () => {
+    console.log(`🚀 API Mission Control active on port ${PORT}`);
+    // Optional: Initial connection test
+    getDB().then(() => console.log("✅ Initial connection test passed")).catch(() => {});
+});
